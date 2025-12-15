@@ -8,7 +8,7 @@ import time
 # ==========================================
 st.set_page_config(page_title="부동산 블로그 작가", page_icon="✍️")
 st.title("✍️ 부동산 블로그 상세 글쓰기")
-st.caption("사진만 넣으면 AI가 네이버 블로그 글을 써줍니다! (안정성 강화 버전 🛡️)")
+st.caption("사진만 넣으면 AI가 네이버 블로그 글을 써줍니다! (스마트 모델 선택 🧠)")
 
 # ==========================================
 # 2. API 키 처리
@@ -27,7 +27,7 @@ if not api_key:
 # 3. [핵심] 오뚝이 함수 (429 에러나면 기다렸다가 다시 함)
 # ==========================================
 def generate_content_with_retry(model, prompt, image=None):
-    max_retries = 3  # 최대 3번까지 재시도
+    max_retries = 3
     for attempt in range(max_retries):
         try:
             if image:
@@ -36,16 +36,14 @@ def generate_content_with_retry(model, prompt, image=None):
                 return model.generate_content(prompt)
         except Exception as e:
             error_msg = str(e)
-            # 429 에러(속도제한)가 뜨면
             if "429" in error_msg or "quota" in error_msg.lower():
-                wait_time = 20 # 20초 대기 (무료 버전 한계 극복)
+                wait_time = 20
                 st.warning(f"⚠️ 사용량이 몰려서 20초만 쉬었다가 다시 할게요... (시도 {attempt+1}/{max_retries})")
                 time.sleep(wait_time)
-                continue # 다시 시도
+                continue
             else:
-                # 다른 에러면 그냥 멈춤
                 raise e
-    raise Exception("죄송합니다. 구글 AI가 지금 너무 바빠서 응답하지 않네요. 잠시 후 다시 시도해주세요.")
+    raise Exception("죄송합니다. AI가 응답하지 않습니다. 잠시 후 다시 시도해주세요.")
 
 # ==========================================
 # 4. 메인 기능
@@ -55,9 +53,46 @@ if api_key:
         genai.configure(api_key=api_key)
         
         # -----------------------------------------------------------
-        # 🔥 [수정] 이상한 모델(2.5) 못 쓰게 '1.5-flash'로 강제 고정!
+        # 🔥 [핵심 수정] 2.5(제한 걸린거) 피하고, 2.0이나 1.5 중에 있는거 찾기!
         # -----------------------------------------------------------
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        selected_model_name = ""
+        try:
+            # 1. 현재 내 키로 쓸 수 있는 모델 싹 다 가져오기
+            all_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+            
+            # 2. 우선순위 정하기 (2.0 -> 1.5 순서로 찾기, 2.5는 절대 안 씀!)
+            # 아까 스샷에 있던 'gemini-2.0-flash'를 1순위로 찾습니다.
+            for name in all_models:
+                if "gemini-2.0-flash" in name and "lite" not in name:
+                    selected_model_name = name
+                    break
+            
+            # 2.0이 없으면 1.5를 찾습니다.
+            if not selected_model_name:
+                for name in all_models:
+                    if "gemini-1.5-flash" in name:
+                        selected_model_name = name
+                        break
+            
+            # 그래도 없으면... 2.5(제한 걸린거)라도 제외하고 아무거나 flash 찾습니다.
+            if not selected_model_name:
+                for name in all_models:
+                    if "flash" in name and "2.5" not in name:
+                        selected_model_name = name
+                        break
+            
+            # 진짜진짜 없으면 목록의 첫번째꺼 (최후의 수단)
+            if not selected_model_name and all_models:
+                selected_model_name = all_models[0]
+
+            # 모델 연결
+            model = genai.GenerativeModel(selected_model_name)
+            # (디버깅용) 화면 구석에 어떤 모델 잡혔는지 작게 보여줌 (나중에 지워도 됨)
+            st.toast(f"연결된 모델: {selected_model_name}") 
+            
+        except Exception as e:
+            st.error(f"모델 연결 중 오류: {e}")
+            st.stop()
             
     except Exception as e:
         st.error(f"키 설정 오류: {e}")
@@ -104,7 +139,6 @@ if api_key:
             """
             
             try:
-                # 오뚝이 함수로 실행
                 intro_res = generate_content_with_retry(model, intro_prompt)
                 st.success("✅ 도입부 작성 완료!")
                 st.subheader("📝 [1] 제목 및 인사말")
@@ -121,7 +155,6 @@ if api_key:
         progress_bar = st.progress(0)
         
         for i, file in enumerate(uploaded_files):
-            # 안내 메시지
             status_text = st.empty()
             status_text.caption(f"📸 {i+1}번째 사진 분석 중...")
 
@@ -138,7 +171,6 @@ if api_key:
                 3. 아주 친절한 '해요체'를 쓰세요. (예: "보시다시피 거실이 정말 넓게 빠졌어요~")
                 """
                 
-                # 오뚝이 함수로 실행
                 response = generate_content_with_retry(model, img_prompt, image)
                 
                 c1, c2 = st.columns([1, 2])
@@ -152,10 +184,7 @@ if api_key:
             except Exception as e:
                 st.error(f"{i+1}번째 사진 처리 실패: {e}")
 
-            # 진행률 업데이트
             progress_bar.progress((i + 1) / len(uploaded_files))
-            
-            # 안전 휴식 (5초)
             time.sleep(5) 
 
         st.divider()
@@ -174,7 +203,6 @@ if api_key:
                 2. "모바일에서 터치하시면 바로 전화 연결됩니다" 문구 포함.
                 3. 검색 잘 되는 해시태그 10개 추천.
                 """
-                # 오뚝이 함수로 실행
                 outro_res = generate_content_with_retry(model, outro_prompt)
                 
                 st.subheader("📝 [3] 마무리 및 해시태그")
