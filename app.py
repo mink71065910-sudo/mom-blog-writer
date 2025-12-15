@@ -8,7 +8,7 @@ import time
 # ==========================================
 st.set_page_config(page_title="부동산 블로그 작가", page_icon="✍️")
 st.title("✍️ 부동산 블로그 상세 글쓰기")
-st.caption("사진만 넣으면 전문가처럼 글을 써드립니다! (오류 방지 기능 탑재 🛡️)")
+st.caption("사진만 넣으면 AI가 네이버 블로그 글을 써줍니다! (빠른 속도 모드 ⚡)")
 
 # ==========================================
 # 2. API 키 처리
@@ -54,23 +54,32 @@ if api_key:
     try:
         genai.configure(api_key=api_key)
         
-        # 모델 자동 선택 로직
+        # -----------------------------------------------------------
+        # 🔥 [자동 선택] 드롭다운 없이 알아서 Flash 모델을 찾습니다!
+        # -----------------------------------------------------------
         selected_model_name = ""
         try:
+            # 1. 사용 가능한 모델 목록 가져오기
             available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-            # 1.5-flash 모델을 최우선으로 찾습니다 (속도와 안정성 위해)
+            
+            # 2. '1.5-flash'를 최우선으로 찾기 (가장 안정적)
             for name in available_models:
-                if "gemini-1.5-flash" in name and "latest" in name:
+                if "gemini-1.5-flash" in name:
                     selected_model_name = name
                     break
+            
+            # 3. 없으면 아무 'flash' 모델이나 찾기 (2.0 등)
             if not selected_model_name:
                 for name in available_models:
                     if "flash" in name:
                         selected_model_name = name
                         break
+            
+            # 4. 그래도 없으면 목록의 첫 번째 것 사용
             if not selected_model_name and available_models:
                 selected_model_name = available_models[0]
 
+            # 모델 설정 (화면에 표시는 안 함)
             model = genai.GenerativeModel(selected_model_name)
             
         except Exception as e:
@@ -122,7 +131,7 @@ if api_key:
             """
             
             try:
-                # 새로 만든 오뚝이 함수 사용!
+                # 오뚝이 함수로 실행
                 intro_res = generate_content_with_retry(model, intro_prompt)
                 st.success("✅ 도입부 작성 완료!")
                 st.subheader("📝 [1] 제목 및 인사말")
@@ -156,7 +165,7 @@ if api_key:
                 3. 아주 친절한 '해요체'를 쓰세요. (예: "보시다시피 거실이 정말 넓게 빠졌어요~")
                 """
                 
-                # 새로 만든 오뚝이 함수 사용! (실패하면 20초 쉼)
+                # 오뚝이 함수로 실행
                 response = generate_content_with_retry(model, img_prompt, image)
                 
                 c1, c2 = st.columns([1, 2])
@@ -173,7 +182,7 @@ if api_key:
             # 진행률 업데이트
             progress_bar.progress((i + 1) / len(uploaded_files))
             
-            # 구글 무료 버전을 위해 강제로 5초씩 쉬어줍니다. (안전빵)
+            # 안전 휴식 (5초)
             time.sleep(5) 
 
         st.divider()
@@ -192,7 +201,7 @@ if api_key:
                 2. "모바일에서 터치하시면 바로 전화 연결됩니다" 문구 포함.
                 3. 검색 잘 되는 해시태그 10개 추천.
                 """
-                # 오뚝이 함수 사용
+                # 오뚝이 함수로 실행
                 outro_res = generate_content_with_retry(model, outro_prompt)
                 
                 st.subheader("📝 [3] 마무리 및 해시태그")
