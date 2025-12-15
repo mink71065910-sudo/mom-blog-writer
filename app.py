@@ -8,7 +8,7 @@ import time
 # ==========================================
 st.set_page_config(page_title="부동산 블로그 작가", page_icon="✍️")
 st.title("✍️ 부동산 블로그 상세 글쓰기")
-st.markdown("사진마다 설명을 따로따로 써드립니다! (블로그 전문가 스타일 😎)")
+st.caption("사진만 넣으면 전문가처럼 글을 써드립니다! (고성능 Pro 모드 가동 중 🧠)")
 
 # ==========================================
 # 2. API 키 처리
@@ -31,30 +31,38 @@ if api_key:
         genai.configure(api_key=api_key)
         
         # -----------------------------------------------------------
-        # 🔥 [핵심 수정] 사용 가능한 모델 목록을 직접 가져옵니다!
+        # 🔥 [수정됨] 이제 'Pro' 모델을 1순위로 찾습니다!
         # -----------------------------------------------------------
-        available_models = []
+        selected_model_name = ""
         try:
-            for m in genai.list_models():
-                # 'generateContent' 기능(글쓰기+사진보기)이 있는 모델만 찾음
-                if 'generateContent' in m.supported_generation_methods:
-                    available_models.append(m.name)
-        except Exception as e:
-            st.error(f"모델 목록을 가져오는 중 오류 발생: {e}")
-
-        # 모델 선택 상자 만들기 (기본값으로 gemini-1.5-flash가 포함된 것 찾기)
-        if available_models:
-            # 1.5-flash가 포함된 모델을 우선 선택
-            default_index = 0
-            for i, name in enumerate(available_models):
-                if "flash" in name:
-                    default_index = i
+            # 1. 사용 가능한 모델 목록을 가져옵니다.
+            available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+            
+            # 2. '1.5-pro'가 들어간 최신 모델을 최우선으로 찾습니다. (여기가 핵심!)
+            for name in available_models:
+                if "gemini-1.5-pro" in name and "latest" in name:
+                    selected_model_name = name
                     break
             
-            selected_model_name = st.selectbox("🤖 사용할 AI 모델 선택 (자동 검색됨)", available_models, index=default_index)
+            # 3. 최신 pro가 없으면 그냥 pro 아무거나 찾습니다.
+            if not selected_model_name:
+                for name in available_models:
+                    if "gemini-1.5-pro" in name:
+                        selected_model_name = name
+                        break
+            
+            # 4. 정 안되면 flash라도 찾습니다. (안전장치)
+            if not selected_model_name:
+                for name in available_models:
+                    if "flash" in name:
+                        selected_model_name = name
+                        break
+
+            # 5. 모델 설정 (화면에 표시는 안 함)
             model = genai.GenerativeModel(selected_model_name)
-        else:
-            st.error("사용 가능한 모델을 찾을 수 없습니다. API 키를 확인해주세요.")
+            
+        except Exception as e:
+            st.error(f"AI 모델 연결 중 오류: {e}")
             st.stop()
             
     except Exception as e:
@@ -84,7 +92,7 @@ if api_key:
     if uploaded_files and st.button("🚀 블로그 포스팅 시작하기 (클릭)"):
         
         # 1️⃣ 서론(인트로) 작성
-        with st.spinner("1단계: 매력적인 제목과 인사말을 쓰는 중..."):
+        with st.spinner("1단계: 고성능 AI가 제목과 인사말을 생각 중입니다... (조금 걸려요)"):
             intro_prompt = f"""
             당신은 베테랑 공인중개사 블로거입니다.
             아래 정보를 바탕으로 네이버 블로그 '도입부(서론)'를 작성해주세요.
@@ -107,7 +115,7 @@ if api_key:
                 st.subheader("📝 [1] 제목 및 인사말")
                 st.text_area("도입부 복사하기", value=intro_res.text, height=200)
             except Exception as e:
-                st.error(f"글쓰기 실패 (모델 문제): {e}")
+                st.error(f"글쓰기 실패. 잠시 후 다시 시도해주세요. ({e})")
 
         st.divider()
 
@@ -118,7 +126,7 @@ if api_key:
         progress_bar = st.progress(0)
         
         for i, file in enumerate(uploaded_files):
-            with st.spinner(f"{i+1}번째 사진 분석 중..."):
+            with st.spinner(f"{i+1}번째 사진을 꼼꼼히 분석 중..."):
                 try:
                     image = Image.open(file)
                     
@@ -131,6 +139,7 @@ if api_key:
                     1. '거실', '주방', '안방', '화장실', '현관' 중 어디인지 파악하세요.
                     2. 사진에 보이는 장점(넓음, 깨끗함, 채광, 수납공간 등)을 구체적으로 칭찬하세요.
                     3. 아주 친절한 '해요체'를 쓰세요. (예: "보시다시피 거실이 정말 넓게 빠졌어요~")
+                    4. 전문적인 표현을 적절히 섞어서 신뢰감을 주세요.
                     """
                     
                     response = model.generate_content([img_prompt, image])
@@ -149,7 +158,7 @@ if api_key:
         st.divider()
 
         # 3️⃣ 결론(아웃트로) 작성
-        with st.spinner("3단계: 마무리 인사와 태그 작성 중..."):
+        with st.spinner("3단계: 감동적인 마무리 인사 작성 중..."):
             try:
                 outro_prompt = f"""
                 블로그 포스팅을 마무리하는 '결론' 부분을 작성해주세요.
