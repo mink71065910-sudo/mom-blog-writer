@@ -8,7 +8,7 @@ import time
 # ==========================================
 st.set_page_config(page_title="부동산 블로그 작가", page_icon="✍️")
 st.title("✍️ 부동산 블로그 상세 글쓰기")
-st.caption("사진만 넣으면 전문가처럼 글을 써드립니다! (고성능 Pro 모드 가동 중 🧠)")
+st.caption("사진만 넣으면 전문가처럼 글을 써드립니다! (오류 방지 기능 탑재 🛡️)")
 
 # ==========================================
 # 2. API 키 처리
@@ -24,41 +24,53 @@ if not api_key:
     api_key = st.text_input("🔑 구글 API 키를 입력하세요:", type="password")
 
 # ==========================================
-# 3. 메인 기능
+# 3. [핵심] 오뚝이 함수 (에러나면 기다렸다가 다시 함)
+# ==========================================
+def generate_content_with_retry(model, prompt, image=None):
+    max_retries = 3  # 최대 3번까지 재시도
+    for attempt in range(max_retries):
+        try:
+            if image:
+                return model.generate_content([prompt, image])
+            else:
+                return model.generate_content(prompt)
+        except Exception as e:
+            error_msg = str(e)
+            # 429 에러(속도제한)가 뜨면
+            if "429" in error_msg:
+                wait_time = 20 # 20초 대기
+                st.warning(f"⚠️ 구글 AI가 너무 바쁘대요! {wait_time}초만 쉬었다가 다시 할게요... (시도 {attempt+1}/{max_retries})")
+                time.sleep(wait_time)
+                continue # 다시 시도
+            else:
+                # 다른 에러면 그냥 멈춤
+                raise e
+    raise Exception("재시도 횟수를 초과했습니다. 잠시 후 다시 시도해주세요.")
+
+# ==========================================
+# 4. 메인 기능
 # ==========================================
 if api_key:
     try:
         genai.configure(api_key=api_key)
         
-        # -----------------------------------------------------------
-        # 🔥 [수정됨] 이제 'Pro' 모델을 1순위로 찾습니다!
-        # -----------------------------------------------------------
+        # 모델 자동 선택 로직
         selected_model_name = ""
         try:
-            # 1. 사용 가능한 모델 목록을 가져옵니다.
             available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-            
-            # 2. '1.5-pro'가 들어간 최신 모델을 최우선으로 찾습니다. (여기가 핵심!)
+            # 1.5-flash 모델을 최우선으로 찾습니다 (속도와 안정성 위해)
             for name in available_models:
-                if "gemini-1.5-pro" in name and "latest" in name:
+                if "gemini-1.5-flash" in name and "latest" in name:
                     selected_model_name = name
                     break
-            
-            # 3. 최신 pro가 없으면 그냥 pro 아무거나 찾습니다.
-            if not selected_model_name:
-                for name in available_models:
-                    if "gemini-1.5-pro" in name:
-                        selected_model_name = name
-                        break
-            
-            # 4. 정 안되면 flash라도 찾습니다. (안전장치)
             if not selected_model_name:
                 for name in available_models:
                     if "flash" in name:
                         selected_model_name = name
                         break
+            if not selected_model_name and available_models:
+                selected_model_name = available_models[0]
 
-            # 5. 모델 설정 (화면에 표시는 안 함)
             model = genai.GenerativeModel(selected_model_name)
             
         except Exception as e:
@@ -92,7 +104,7 @@ if api_key:
     if uploaded_files and st.button("🚀 블로그 포스팅 시작하기 (클릭)"):
         
         # 1️⃣ 서론(인트로) 작성
-        with st.spinner("1단계: 고성능 AI가 제목과 인사말을 생각 중입니다... (조금 걸려요)"):
+        with st.spinner("1단계: 매력적인 제목과 인사말을 쓰는 중..."):
             intro_prompt = f"""
             당신은 베테랑 공인중개사 블로거입니다.
             아래 정보를 바탕으로 네이버 블로그 '도입부(서론)'를 작성해주세요.
@@ -110,7 +122,8 @@ if api_key:
             """
             
             try:
-                intro_res = model.generate_content(intro_prompt)
+                # 새로 만든 오뚝이 함수 사용!
+                intro_res = generate_content_with_retry(model, intro_prompt)
                 st.success("✅ 도입부 작성 완료!")
                 st.subheader("📝 [1] 제목 및 인사말")
                 st.text_area("도입부 복사하기", value=intro_res.text, height=200)
@@ -126,39 +139,47 @@ if api_key:
         progress_bar = st.progress(0)
         
         for i, file in enumerate(uploaded_files):
-            with st.spinner(f"{i+1}번째 사진을 꼼꼼히 분석 중..."):
-                try:
-                    image = Image.open(file)
-                    
-                    # 사진별 프롬프트
-                    img_prompt = f"""
-                    이 사진은 {location} 부동산 매물의 내부 사진 중 하나입니다.
-                    이 사진을 보고 블로그 본문 내용을 3~4줄 정도로 자연스럽게 작성해주세요.
-                    
-                    [요청사항]
-                    1. '거실', '주방', '안방', '화장실', '현관' 중 어디인지 파악하세요.
-                    2. 사진에 보이는 장점(넓음, 깨끗함, 채광, 수납공간 등)을 구체적으로 칭찬하세요.
-                    3. 아주 친절한 '해요체'를 쓰세요. (예: "보시다시피 거실이 정말 넓게 빠졌어요~")
-                    4. 전문적인 표현을 적절히 섞어서 신뢰감을 주세요.
-                    """
-                    
-                    response = model.generate_content([img_prompt, image])
-                    
-                    c1, c2 = st.columns([1, 2])
-                    with c1:
-                        st.image(image, use_container_width=True)
-                    with c2:
-                        st.text_area(f"{i+1}번째 사진 설명", value=response.text, height=150)
-                    
-                    progress_bar.progress((i + 1) / len(uploaded_files))
-                    time.sleep(1)
-                except Exception as e:
-                    st.error(f"{i+1}번째 사진 처리 중 오류: {e}")
+            # 안내 메시지
+            status_text = st.empty()
+            status_text.text(f"📸 {i+1}번째 사진 분석 중...")
+
+            try:
+                image = Image.open(file)
+                
+                img_prompt = f"""
+                이 사진은 {location} 부동산 매물의 내부 사진 중 하나입니다.
+                이 사진을 보고 블로그 본문 내용을 3~4줄 정도로 자연스럽게 작성해주세요.
+                
+                [요청사항]
+                1. '거실', '주방', '안방', '화장실', '현관' 중 어디인지 파악하세요.
+                2. 사진에 보이는 장점(넓음, 깨끗함, 채광, 수납공간 등)을 구체적으로 칭찬하세요.
+                3. 아주 친절한 '해요체'를 쓰세요. (예: "보시다시피 거실이 정말 넓게 빠졌어요~")
+                """
+                
+                # 새로 만든 오뚝이 함수 사용! (실패하면 20초 쉼)
+                response = generate_content_with_retry(model, img_prompt, image)
+                
+                c1, c2 = st.columns([1, 2])
+                with c1:
+                    st.image(image, use_container_width=True)
+                with c2:
+                    st.text_area(f"{i+1}번째 사진 설명", value=response.text, height=150)
+                
+                status_text.text(f"✅ {i+1}번째 사진 완료!")
+                
+            except Exception as e:
+                st.error(f"{i+1}번째 사진 처리 실패: {e}")
+
+            # 진행률 업데이트
+            progress_bar.progress((i + 1) / len(uploaded_files))
+            
+            # 구글 무료 버전을 위해 강제로 5초씩 쉬어줍니다. (안전빵)
+            time.sleep(5) 
 
         st.divider()
 
         # 3️⃣ 결론(아웃트로) 작성
-        with st.spinner("3단계: 감동적인 마무리 인사 작성 중..."):
+        with st.spinner("3단계: 마무리 인사와 태그 작성 중..."):
             try:
                 outro_prompt = f"""
                 블로그 포스팅을 마무리하는 '결론' 부분을 작성해주세요.
@@ -171,7 +192,8 @@ if api_key:
                 2. "모바일에서 터치하시면 바로 전화 연결됩니다" 문구 포함.
                 3. 검색 잘 되는 해시태그 10개 추천.
                 """
-                outro_res = model.generate_content(outro_prompt)
+                # 오뚝이 함수 사용
+                outro_res = generate_content_with_retry(model, outro_prompt)
                 
                 st.subheader("📝 [3] 마무리 및 해시태그")
                 st.text_area("마무리 복사하기", value=outro_res.text, height=200)
