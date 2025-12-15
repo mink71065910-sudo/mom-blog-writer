@@ -8,7 +8,7 @@ import time
 # ==========================================
 st.set_page_config(page_title="부동산 블로그 작가", page_icon="✍️")
 st.title("✍️ 부동산 블로그 상세 글쓰기")
-st.caption("사진만 넣으면 AI가 네이버 블로그 글을 써줍니다! (스마트 모델 선택 🧠)")
+st.markdown("사진마다 설명을 따로따로 써드립니다! (블로그 전문가 스타일 😎)")
 
 # ==========================================
 # 2. API 키 처리
@@ -24,74 +24,37 @@ if not api_key:
     api_key = st.text_input("🔑 구글 API 키를 입력하세요:", type="password")
 
 # ==========================================
-# 3. [핵심] 오뚝이 함수 (429 에러나면 기다렸다가 다시 함)
-# ==========================================
-def generate_content_with_retry(model, prompt, image=None):
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            if image:
-                return model.generate_content([prompt, image])
-            else:
-                return model.generate_content(prompt)
-        except Exception as e:
-            error_msg = str(e)
-            if "429" in error_msg or "quota" in error_msg.lower():
-                wait_time = 20
-                st.warning(f"⚠️ 사용량이 몰려서 20초만 쉬었다가 다시 할게요... (시도 {attempt+1}/{max_retries})")
-                time.sleep(wait_time)
-                continue
-            else:
-                raise e
-    raise Exception("죄송합니다. AI가 응답하지 않습니다. 잠시 후 다시 시도해주세요.")
-
-# ==========================================
-# 4. 메인 기능
+# 3. 메인 기능
 # ==========================================
 if api_key:
     try:
         genai.configure(api_key=api_key)
         
         # -----------------------------------------------------------
-        # 🔥 [핵심 수정] 2.5(제한 걸린거) 피하고, 2.0이나 1.5 중에 있는거 찾기!
+        # 🔥 [핵심 수정] 사용 가능한 모델 목록을 직접 가져옵니다!
         # -----------------------------------------------------------
-        selected_model_name = ""
+        available_models = []
         try:
-            # 1. 현재 내 키로 쓸 수 있는 모델 싹 다 가져오기
-            all_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-            
-            # 2. 우선순위 정하기 (2.0 -> 1.5 순서로 찾기, 2.5는 절대 안 씀!)
-            # 아까 스샷에 있던 'gemini-2.0-flash'를 1순위로 찾습니다.
-            for name in all_models:
-                if "gemini-2.0-flash" in name and "lite" not in name:
-                    selected_model_name = name
+            for m in genai.list_models():
+                # 'generateContent' 기능(글쓰기+사진보기)이 있는 모델만 찾음
+                if 'generateContent' in m.supported_generation_methods:
+                    available_models.append(m.name)
+        except Exception as e:
+            st.error(f"모델 목록을 가져오는 중 오류 발생: {e}")
+
+        # 모델 선택 상자 만들기 (기본값으로 gemini-1.5-flash가 포함된 것 찾기)
+        if available_models:
+            # 1.5-flash가 포함된 모델을 우선 선택
+            default_index = 0
+            for i, name in enumerate(available_models):
+                if "flash" in name:
+                    default_index = i
                     break
             
-            # 2.0이 없으면 1.5를 찾습니다.
-            if not selected_model_name:
-                for name in all_models:
-                    if "gemini-1.5-flash" in name:
-                        selected_model_name = name
-                        break
-            
-            # 그래도 없으면... 2.5(제한 걸린거)라도 제외하고 아무거나 flash 찾습니다.
-            if not selected_model_name:
-                for name in all_models:
-                    if "flash" in name and "2.5" not in name:
-                        selected_model_name = name
-                        break
-            
-            # 진짜진짜 없으면 목록의 첫번째꺼 (최후의 수단)
-            if not selected_model_name and all_models:
-                selected_model_name = all_models[0]
-
-            # 모델 연결
+            selected_model_name = st.selectbox("🤖 사용할 AI 모델 선택 (자동 검색됨)", available_models, index=default_index)
             model = genai.GenerativeModel(selected_model_name)
-            # (디버깅용) 화면 구석에 어떤 모델 잡혔는지 작게 보여줌 (나중에 지워도 됨)
-            st.toast(f"연결된 모델: {selected_model_name}") 
-            
-        except Exception as e:
-            st.error(f"모델 연결 중 오류: {e}")
+        else:
+            st.error("사용 가능한 모델을 찾을 수 없습니다. API 키를 확인해주세요.")
             st.stop()
             
     except Exception as e:
@@ -139,12 +102,12 @@ if api_key:
             """
             
             try:
-                intro_res = generate_content_with_retry(model, intro_prompt)
+                intro_res = model.generate_content(intro_prompt)
                 st.success("✅ 도입부 작성 완료!")
                 st.subheader("📝 [1] 제목 및 인사말")
                 st.text_area("도입부 복사하기", value=intro_res.text, height=200)
             except Exception as e:
-                st.error(f"글쓰기 실패: {e}")
+                st.error(f"글쓰기 실패 (모델 문제): {e}")
 
         st.divider()
 
@@ -155,37 +118,33 @@ if api_key:
         progress_bar = st.progress(0)
         
         for i, file in enumerate(uploaded_files):
-            status_text = st.empty()
-            status_text.caption(f"📸 {i+1}번째 사진 분석 중...")
-
-            try:
-                image = Image.open(file)
-                
-                img_prompt = f"""
-                이 사진은 {location} 부동산 매물의 내부 사진 중 하나입니다.
-                이 사진을 보고 블로그 본문 내용을 3~4줄 정도로 자연스럽게 작성해주세요.
-                
-                [요청사항]
-                1. '거실', '주방', '안방', '화장실', '현관' 중 어디인지 파악하세요.
-                2. 사진에 보이는 장점(넓음, 깨끗함, 채광, 수납공간 등)을 구체적으로 칭찬하세요.
-                3. 아주 친절한 '해요체'를 쓰세요. (예: "보시다시피 거실이 정말 넓게 빠졌어요~")
-                """
-                
-                response = generate_content_with_retry(model, img_prompt, image)
-                
-                c1, c2 = st.columns([1, 2])
-                with c1:
-                    st.image(image, use_container_width=True)
-                with c2:
-                    st.text_area(f"{i+1}번째 사진 설명", value=response.text, height=150)
-                
-                status_text.caption(f"✅ {i+1}번째 사진 완료!")
-                
-            except Exception as e:
-                st.error(f"{i+1}번째 사진 처리 실패: {e}")
-
-            progress_bar.progress((i + 1) / len(uploaded_files))
-            time.sleep(5) 
+            with st.spinner(f"{i+1}번째 사진 분석 중..."):
+                try:
+                    image = Image.open(file)
+                    
+                    # 사진별 프롬프트
+                    img_prompt = f"""
+                    이 사진은 {location} 부동산 매물의 내부 사진 중 하나입니다.
+                    이 사진을 보고 블로그 본문 내용을 3~4줄 정도로 자연스럽게 작성해주세요.
+                    
+                    [요청사항]
+                    1. '거실', '주방', '안방', '화장실', '현관' 중 어디인지 파악하세요.
+                    2. 사진에 보이는 장점(넓음, 깨끗함, 채광, 수납공간 등)을 구체적으로 칭찬하세요.
+                    3. 아주 친절한 '해요체'를 쓰세요. (예: "보시다시피 거실이 정말 넓게 빠졌어요~")
+                    """
+                    
+                    response = model.generate_content([img_prompt, image])
+                    
+                    c1, c2 = st.columns([1, 2])
+                    with c1:
+                        st.image(image, use_container_width=True)
+                    with c2:
+                        st.text_area(f"{i+1}번째 사진 설명", value=response.text, height=150)
+                    
+                    progress_bar.progress((i + 1) / len(uploaded_files))
+                    time.sleep(1)
+                except Exception as e:
+                    st.error(f"{i+1}번째 사진 처리 중 오류: {e}")
 
         st.divider()
 
@@ -203,7 +162,7 @@ if api_key:
                 2. "모바일에서 터치하시면 바로 전화 연결됩니다" 문구 포함.
                 3. 검색 잘 되는 해시태그 10개 추천.
                 """
-                outro_res = generate_content_with_retry(model, outro_prompt)
+                outro_res = model.generate_content(outro_prompt)
                 
                 st.subheader("📝 [3] 마무리 및 해시태그")
                 st.text_area("마무리 복사하기", value=outro_res.text, height=200)
