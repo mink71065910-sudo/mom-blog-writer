@@ -8,7 +8,7 @@ import time
 # ==========================================
 st.set_page_config(page_title="부동산 블로그 작가", page_icon="✍️")
 st.title("✍️ 부동산 블로그 상세 글쓰기")
-st.caption("사진만 넣으면 AI가 네이버 블로그 글을 써줍니다! (빠른 속도 모드 ⚡)")
+st.caption("사진만 넣으면 AI가 네이버 블로그 글을 써줍니다! (자동 모드 🤖)")
 
 # ==========================================
 # 2. API 키 처리
@@ -24,66 +24,45 @@ if not api_key:
     api_key = st.text_input("🔑 구글 API 키를 입력하세요:", type="password")
 
 # ==========================================
-# 3. [핵심] 오뚝이 함수 (에러나면 기다렸다가 다시 함)
-# ==========================================
-def generate_content_with_retry(model, prompt, image=None):
-    max_retries = 3  # 최대 3번까지 재시도
-    for attempt in range(max_retries):
-        try:
-            if image:
-                return model.generate_content([prompt, image])
-            else:
-                return model.generate_content(prompt)
-        except Exception as e:
-            error_msg = str(e)
-            # 429 에러(속도제한)가 뜨면
-            if "429" in error_msg:
-                wait_time = 20 # 20초 대기
-                st.warning(f"⚠️ 구글 AI가 너무 바쁘대요! {wait_time}초만 쉬었다가 다시 할게요... (시도 {attempt+1}/{max_retries})")
-                time.sleep(wait_time)
-                continue # 다시 시도
-            else:
-                # 다른 에러면 그냥 멈춤
-                raise e
-    raise Exception("재시도 횟수를 초과했습니다. 잠시 후 다시 시도해주세요.")
-
-# ==========================================
-# 4. 메인 기능
+# 3. 메인 기능
 # ==========================================
 if api_key:
     try:
         genai.configure(api_key=api_key)
         
         # -----------------------------------------------------------
-        # 🔥 [자동 선택] 드롭다운 없이 알아서 Flash 모델을 찾습니다!
+        # 🔥 [수정됨] 드롭다운 삭제 -> 내부적으로 자동 선택
         # -----------------------------------------------------------
         selected_model_name = ""
         try:
-            # 1. 사용 가능한 모델 목록 가져오기
-            available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+            # 1. 사용 가능한 모델 명단 가져오기
+            available_models = []
+            for m in genai.list_models():
+                if 'generateContent' in m.supported_generation_methods:
+                    available_models.append(m.name)
             
-            # 2. '1.5-flash'를 최우선으로 찾기 (가장 안정적)
+            # 2. '1.5-flash'를 최우선으로 찾기 (가장 빠르고 안정적)
             for name in available_models:
-                if "gemini-1.5-flash" in name:
+                if "gemini-1.5-flash" in name and "latest" in name:
                     selected_model_name = name
                     break
             
-            # 3. 없으면 아무 'flash' 모델이나 찾기 (2.0 등)
+            # 3. 없으면 아무 'flash' 모델이나 찾기
             if not selected_model_name:
                 for name in available_models:
                     if "flash" in name:
                         selected_model_name = name
                         break
             
-            # 4. 그래도 없으면 목록의 첫 번째 것 사용
+            # 4. 그래도 없으면 목록의 첫 번째 것 사용 (안전장치)
             if not selected_model_name and available_models:
                 selected_model_name = available_models[0]
 
-            # 모델 설정 (화면에 표시는 안 함)
+            # 5. 모델 연결 (화면에는 아무것도 표시하지 않음)
             model = genai.GenerativeModel(selected_model_name)
             
         except Exception as e:
-            st.error(f"AI 모델 연결 중 오류: {e}")
+            st.error(f"모델 목록을 가져오는 중 오류 발생: {e}")
             st.stop()
             
     except Exception as e:
@@ -131,13 +110,12 @@ if api_key:
             """
             
             try:
-                # 오뚝이 함수로 실행
-                intro_res = generate_content_with_retry(model, intro_prompt)
+                intro_res = model.generate_content(intro_prompt)
                 st.success("✅ 도입부 작성 완료!")
                 st.subheader("📝 [1] 제목 및 인사말")
                 st.text_area("도입부 복사하기", value=intro_res.text, height=200)
             except Exception as e:
-                st.error(f"글쓰기 실패. 잠시 후 다시 시도해주세요. ({e})")
+                st.error(f"글쓰기 실패 (모델 문제): {e}")
 
         st.divider()
 
@@ -148,13 +126,14 @@ if api_key:
         progress_bar = st.progress(0)
         
         for i, file in enumerate(uploaded_files):
-            # 안내 메시지
+            # 진행 상황 표시
             status_text = st.empty()
-            status_text.text(f"📸 {i+1}번째 사진 분석 중...")
+            status_text.caption(f"📸 {i+1}번째 사진 분석 중...")
 
             try:
                 image = Image.open(file)
                 
+                # 사진별 프롬프트
                 img_prompt = f"""
                 이 사진은 {location} 부동산 매물의 내부 사진 중 하나입니다.
                 이 사진을 보고 블로그 본문 내용을 3~4줄 정도로 자연스럽게 작성해주세요.
@@ -165,8 +144,7 @@ if api_key:
                 3. 아주 친절한 '해요체'를 쓰세요. (예: "보시다시피 거실이 정말 넓게 빠졌어요~")
                 """
                 
-                # 오뚝이 함수로 실행
-                response = generate_content_with_retry(model, img_prompt, image)
+                response = model.generate_content([img_prompt, image])
                 
                 c1, c2 = st.columns([1, 2])
                 with c1:
@@ -174,16 +152,17 @@ if api_key:
                 with c2:
                     st.text_area(f"{i+1}번째 사진 설명", value=response.text, height=150)
                 
-                status_text.text(f"✅ {i+1}번째 사진 완료!")
+                status_text.caption(f"✅ {i+1}번째 사진 완료!")
                 
             except Exception as e:
-                st.error(f"{i+1}번째 사진 처리 실패: {e}")
+                st.error(f"{i+1}번째 사진 처리 중 오류: {e}")
 
             # 진행률 업데이트
             progress_bar.progress((i + 1) / len(uploaded_files))
             
-            # 안전 휴식 (5초)
-            time.sleep(5) 
+            # ⚠️ [중요] 429 에러 방지를 위해 대기 시간을 5초로 늘렸습니다.
+            # 무료 버전은 너무 빨리 요청하면 멈춥니다.
+            time.sleep(5)
 
         st.divider()
 
@@ -201,8 +180,7 @@ if api_key:
                 2. "모바일에서 터치하시면 바로 전화 연결됩니다" 문구 포함.
                 3. 검색 잘 되는 해시태그 10개 추천.
                 """
-                # 오뚝이 함수로 실행
-                outro_res = generate_content_with_retry(model, outro_prompt)
+                outro_res = model.generate_content(outro_prompt)
                 
                 st.subheader("📝 [3] 마무리 및 해시태그")
                 st.text_area("마무리 복사하기", value=outro_res.text, height=200)
